@@ -1,0 +1,29 @@
+{
+  "name": "translate-lbx",
+  "version": "1.0.0",
+  "description": "Tradutor de arquivos .lbx usando OpenAI",
+  "license": "ISC",
+  "author": "Seu Nome",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "scripts": {
+    "start": "ts-node src/index.ts",
+    "build": "tsc",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "packageManager": "yarn@4.6.0",
+  "dependencies": {
+    "@google-cloud/translate": "^9.0.0",
+    "@vitalets/google-translate-api": "^9.2.1",
+    "axios": "^1.8.4",
+    "buffer": "^6.0.3",
+    "dotenv": "^16.4.7",
+    "https-proxy-agent": "^7.0.6",
+    "openai": "^4.87.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.2"
+  }
+}
