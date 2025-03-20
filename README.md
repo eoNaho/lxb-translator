@@ -19,6 +19,7 @@ This project allows automatic translation of `.lxb` files using the Google Trans
 
 - **Node.js 18+**
 - **Google Translate API key** (optional)
+- **OpenAI API key** (optional)
 
 ---
 
@@ -40,21 +41,22 @@ This project allows automatic translation of `.lxb` files using the Google Trans
 3. **Create the `.env` file (optional for more requests):**
    ```env
    GOOGLE_API_KEY_FILE=path/to/your/credential.json
-   GOOGLE_PROJECT_ID=seu-project-id
+   GOOGLE_PROJECT_ID=your-project-id
+   OPENAI_API_KEY=your-key
    ```
 
 ---
 
 ## 🚀 How to Use
 
-1. **Place your `.lxb` file in the project root** with the name `1stplaya.lxb`.
+1. **Place your `.lxb` file in the project root** with the name `exemple.lxb`.
 2. **Run the translator:**
 
    ```bash
    npx ts-node src/index.ts
    ```
 
-3. The translated file will be saved as `1stplaya_pt.lxb`.
+3. The translated file will be saved as `exemple_pt.lxb`.
 
 ---
 
@@ -81,6 +83,7 @@ Edit the `src/index.ts` file to adjust:
 - **Request limit** (`requestLimit`)
 - **Cooldown time** (`cooldownTime`)
 - **Input/output file names**
+- **Language he will translate** (`translateOptions`)
 
 ---
 

@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync } from "fs";
-import { translate as unofficialTranslate } from "@vitalets/google-translate-api";
+import { translate as googleUnofficialTranslate } from "@vitalets/google-translate-api";
 import { TranslationServiceClient } from "@google-cloud/translate";
+import OpenAI from "openai"; // Importação corrigida
 import * as dotenv from "dotenv";
 
 dotenv.config();
@@ -14,7 +15,7 @@ const CONFIG = {
   minStringLength: 3,
   requestLimit: 50,
   cooldownTime: 600000, // 10 minutes
-  useGoogleApi: false, // true = API oficial, false = @vitalets/google-translate-api
+  translationService: "openai", // "google", "google-unofficial", or "openai"
   translateOptions: {
     to: "pt",
     from: "en",
@@ -30,6 +31,11 @@ let errorCount = 0;
 // Initialize Google Cloud Translation client
 const googleTranslateClient = new TranslationServiceClient({
   keyFilename: process.env.GOOGLE_API_KEY_FILE, // Caminho para o arquivo de credenciais
+});
+
+// Initialize OpenAI client
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY, // Configuração corrigida
 });
 
 // Cache functions
@@ -59,7 +65,12 @@ function loadCache(): void {
 
 function saveCache(): void {
   try {
-    writeFileSync(CONFIG.cacheFile, JSON.stringify(translationCache, null, 2));
+    // We use JSON.stringify with replace to avoid escaping quotes unnecessarily
+    const cacheContent = JSON.stringify(translationCache, null, 2).replace(
+      /\\"/g,
+      '"'
+    ); // Remove unnecessary quote escapes
+    writeFileSync(CONFIG.cacheFile, cacheContent);
     console.log("💾 Cache saved successfully!");
   } catch (error) {
     console.error(
@@ -68,7 +79,6 @@ function saveCache(): void {
     );
   }
 }
-
 // Buffer replacement function
 function replaceInBuffer(
   source: Buffer,
@@ -105,9 +115,9 @@ function extractStrings(buffer: Buffer): string[] {
 
   for (const byte of buffer) {
     if (byte === 0x24) {
-      // Caractere '$'
+      // Character '$'
       if (inDollarBlock) {
-        // Fim do bloco $, adiciona a string completa
+        // End of $ block, add the complete string
         const str = Buffer.from(current).toString(CONFIG.encoding);
         strings.add(`$${str}$`);
         current = [];
@@ -119,7 +129,7 @@ function extractStrings(buffer: Buffer): string[] {
     if (inDollarBlock) {
       current.push(byte);
     } else if (byte >= 0x20 && byte <= 0x7e) {
-      // ASCII imprimível
+      // Printable ASCII
       current.push(byte);
     } else if (current.length >= CONFIG.minStringLength) {
       const str = Buffer.from(current).toString(CONFIG.encoding);
@@ -152,10 +162,10 @@ async function translateWithGoogleApi(text: string): Promise<string> {
   }
 }
 
-// Translation function with unofficial API
-async function translateWithUnofficialApi(text: string): Promise<string> {
+// Translation function with Google Unofficial API
+async function translateWithGoogleUnofficialApi(text: string): Promise<string> {
   try {
-    const result = await unofficialTranslate(text, {
+    const result = await googleUnofficialTranslate(text, {
       to: CONFIG.translateOptions.to,
       from: CONFIG.translateOptions.from,
     });
@@ -163,7 +173,31 @@ async function translateWithUnofficialApi(text: string): Promise<string> {
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
-    console.error(`⚠️ Unofficial API error: ${errorMessage}`);
+    console.error(`⚠️ Google Unofficial API error: ${errorMessage}`);
+    throw error;
+  }
+}
+
+// Translation function with OpenAI
+async function translateWithOpenAI(text: string): Promise<string> {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini", // or other suitable model
+      messages: [
+        {
+          role: "user",
+          content: `Translate the following ${CONFIG.translateOptions.from} text to ${CONFIG.translateOptions.to}: "${text}"`,
+        },
+      ],
+      max_tokens: 100,
+      temperature: 0.7,
+    });
+
+    return response.choices[0].message.content || text;
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    console.error(`⚠️ OpenAI API error: ${errorMessage}`);
     throw error;
   }
 }
@@ -188,9 +222,21 @@ async function translateText(text: string): Promise<string> {
   }
 
   try {
-    const translated = CONFIG.useGoogleApi
-      ? await translateWithGoogleApi(text)
-      : await translateWithUnofficialApi(text);
+    let translated: string;
+
+    switch (CONFIG.translationService) {
+      case "google":
+        translated = await translateWithGoogleApi(text);
+        break;
+      case "google-unofficial":
+        translated = await translateWithGoogleUnofficialApi(text);
+        break;
+      case "openai":
+        translated = await translateWithOpenAI(text);
+        break;
+      default:
+        throw new Error("Invalid translation service selected");
+    }
 
     translationCache[text] = translated;
     requestCount++;
