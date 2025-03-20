@@ -20,6 +20,8 @@ This project allows automatic translation of `.lxb` files using the Google Trans
 - **Node.js 18+**
 - **Google Translate API key** (optional)
 - **OpenAI API key** (optional)
+- **Deepseek API key** (optional)
+- **OpenRounter API key** (optional)
 
 ---
 
@@ -43,6 +45,8 @@ This project allows automatic translation of `.lxb` files using the Google Trans
    GOOGLE_API_KEY_FILE=path/to/your/credential.json
    GOOGLE_PROJECT_ID=your-project-id
    OPENAI_API_KEY=your-key
+   DEEPSEEK_API_KEY=your-key
+   OPENROUTER_API_KEY=your-key
    ```
 
 ---
@@ -65,13 +69,15 @@ This project allows automatic translation of `.lxb` files using the Google Trans
 ```
 lxb-translator/
 ├── src/
-│   └── index.ts          # Main code
-├── cache.json            # Translation cache
-├── exemple.lxb          # Input file
-├── exemple_pt.lxb       # Translated file
-├── .env                  # Environment configurations
-├── package.json          # Project dependencies
-└── README.md             # This file
+│   ├── input/
+│   │   └── exemple.lxb       # Input file
+│   ├── output/
+│   │   └── exemple_pt.lxb    # Translated file
+│   └── index.ts              # Main code
+├── cache.json                # Translation cache
+├── .env                      # Environment configurations
+├── package.json              # Project dependencies
+└── README.md                 # This file
 ```
 
 ---

@@ -271,7 +271,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/node@npm:^18.11.18":
+"@types/node@npm:^18.0.6, @types/node@npm:^18.11.18":
   version: 18.19.80
   resolution: "@types/node@npm:18.19.80"
   dependencies:
@@ -990,6 +990,16 @@ __metadata:
   languageName: node
   linkType: hard
 
+"libretranslate@npm:^1.0.1":
+  version: 1.0.1
+  resolution: "libretranslate@npm:1.0.1"
+  dependencies:
+    "@types/node": "npm:^18.0.6"
+    typescript: "npm:^4.7.4"
+  checksum: 10c0/d30615a4979267c9a3063341fec9dda2f5d5024abdb35a087176ae8dae4d3af5dcda24954bdfd5ce8a015bfa6fdc4c4f8f9358bdf4725be8cbb933fe2ad917e2
+  languageName: node
+  linkType: hard
+
 "lodash.camelcase@npm:^4.3.0":
   version: 4.3.0
   resolution: "lodash.camelcase@npm:4.3.0"
@@ -1289,6 +1299,7 @@ __metadata:
     buffer: "npm:^6.0.3"
     dotenv: "npm:^16.4.7"
     https-proxy-agent: "npm:^7.0.6"
+    libretranslate: "npm:^1.0.1"
     openai: "npm:^4.87.4"
     ts-node: "npm:^10.9.2"
     typescript: "npm:^5.8.2"
@@ -1333,6 +1344,16 @@ __metadata:
   languageName: node
   linkType: hard
 
+"typescript@npm:^4.7.4":
+  version: 4.9.5
+  resolution: "typescript@npm:4.9.5"
+  bin:
+    tsc: bin/tsc
+    tsserver: bin/tsserver
+  checksum: 10c0/5f6cad2e728a8a063521328e612d7876e12f0d8a8390d3b3aaa452a6a65e24e9ac8ea22beb72a924fd96ea0a49ea63bb4e251fb922b12eedfb7f7a26475e5c56
+  languageName: node
+  linkType: hard
+
 "typescript@npm:^5.8.2":
   version: 5.8.2
   resolution: "typescript@npm:5.8.2"
@@ -1340,6 +1361,16 @@ __metadata:
     tsc: bin/tsc
     tsserver: bin/tsserver
   checksum: 10c0/5c4f6fbf1c6389b6928fe7b8fcd5dc73bb2d58cd4e3883f1d774ed5bd83b151cbac6b7ecf11723de56d4676daeba8713894b1e9af56174f2f9780ae7848ec3c6
+  languageName: node
+  linkType: hard
+
+"typescript@patch:typescript@npm%3A^4.7.4#optional!builtin<compat/typescript>":
+  version: 4.9.5
+  resolution: "typescript@patch:typescript@npm%3A4.9.5#optional!builtin<compat/typescript>::version=4.9.5&hash=289587"
+  bin:
+    tsc: bin/tsc
+    tsserver: bin/tsserver
+  checksum: 10c0/e3333f887c6829dfe0ab6c1dbe0dd1e3e2aeb56c66460cb85c5440c566f900c833d370ca34eb47558c0c69e78ced4bfe09b8f4f98b6de7afed9b84b8d1dd06a1
   languageName: node
   linkType: hard
 

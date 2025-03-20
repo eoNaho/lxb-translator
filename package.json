@@ -19,6 +19,7 @@
     "buffer": "^6.0.3",
     "dotenv": "^16.4.7",
     "https-proxy-agent": "^7.0.6",
+    "libretranslate": "^1.0.1",
     "openai": "^4.87.4"
   },
   "devDependencies": {

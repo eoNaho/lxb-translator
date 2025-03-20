@@ -1,44 +1,60 @@
-import { readFileSync, writeFileSync, existsSync } from "fs";
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+} from "fs";
 import { translate as googleUnofficialTranslate } from "@vitalets/google-translate-api";
 import { TranslationServiceClient } from "@google-cloud/translate";
 import OpenAI from "openai";
 import * as dotenv from "dotenv";
-
+import { join } from "path";
+import axios from "axios";
 dotenv.config();
 
 // Configuration
 const CONFIG = {
-  inputFiles: ["1stplaya.lxb", "2ndplaya.lxb"], // List of input files
-  cacheFile: "cache.json", // Cache file
+  inputDir: "src/input", // Input directory
+  outputDir: "src/output", // Output directory
+  cacheFile: "src/cache.json", // Cache file
   encoding: "utf-8" as const,
   minStringLength: 3,
   requestLimit: 50,
   cooldownTime: 600000, // 10 minutes
-  translationService: "openai", // "google", "google-unofficial", or "openai"
-  openAIModel: "gpt-4o-mini", // OpenAI model (e.g., gpt-4, gpt-3.5-turbo)
+  translationService: "openrouter", // "google", "google-unofficial", "openai", "deepseek", or "openrouter"
+  openAIModel: "gpt-4o", // OpenAI model (e.g., gpt-4, gpt-3.5-turbo)
+  deepseekModel: "deepseek-translator", // DeepSeek model
+  openRouterModel: "deepseek/deepseek-chat:free", // OpenRouter model
   translateOptions: {
     to: "pt", // Target language
     from: "en", // Source language
   },
 };
 
-// Global state
-const translationCache: Record<string, Record<string, string>> = {}; // Cache structure: { filename: { original: translated } }
+const translationCache: Record<string, Record<string, string>> = {};
 let requestCount = 0;
 let translatedCount = 0;
 let errorCount = 0;
 
-// Initialize Google Cloud Translation client
 const googleTranslateClient = new TranslationServiceClient({
-  keyFilename: process.env.GOOGLE_API_KEY_FILE, // Path to credentials file
+  keyFilename: process.env.GOOGLE_API_KEY_FILE,
 });
 
-// Initialize OpenAI client
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Cache functions
+const openrouter = new OpenAI({
+  baseURL: "https://openrouter.ai/api/v1",
+  apiKey: process.env.OPENROUTER_API_KEY,
+});
+
+if (!existsSync(CONFIG.outputDir)) {
+  mkdirSync(CONFIG.outputDir, { recursive: true });
+  console.log(`📁 Output directory created: ${CONFIG.outputDir}`);
+}
+
 function loadCache(): void {
   try {
     if (existsSync(CONFIG.cacheFile)) {
@@ -66,7 +82,7 @@ function saveCache(): void {
     const cacheContent = JSON.stringify(translationCache, null, 2).replace(
       /\\"/g,
       '"'
-    ); // Remove unnecessary quote escapes
+    );
     writeFileSync(CONFIG.cacheFile, cacheContent);
     console.log("💾 Cache saved successfully!");
   } catch (error) {
@@ -77,14 +93,23 @@ function saveCache(): void {
   }
 }
 
-// Buffer replacement function
+function replaceQuotesInText(text: string): string {
+  return text.replace(/"/g, "'");
+}
+
 function replaceInBuffer(
   source: Buffer,
   search: string,
   replace: string
 ): Buffer {
-  const searchBuffer = Buffer.from(search, CONFIG.encoding);
-  const replaceBuffer = Buffer.from(replace, CONFIG.encoding);
+  const searchBuffer = Buffer.from(
+    replaceQuotesInText(search),
+    CONFIG.encoding
+  );
+  const replaceBuffer = Buffer.from(
+    replaceQuotesInText(replace),
+    CONFIG.encoding
+  );
 
   let position = 0;
   const chunks: Buffer[] = [];
@@ -105,17 +130,18 @@ function replaceInBuffer(
   return Buffer.concat(chunks);
 }
 
-// String extraction function
 function extractStrings(buffer: Buffer): string[] {
   const strings = new Set<string>();
   let current: number[] = [];
   let inDollarBlock = false;
 
-  for (const byte of buffer) {
+  const bufferText = replaceQuotesInText(buffer.toString(CONFIG.encoding));
+
+  for (const char of bufferText) {
+    const byte = char.charCodeAt(0);
+
     if (byte === 0x24) {
-      // Character '$'
       if (inDollarBlock) {
-        // End of $ block, add the complete string
         const str = Buffer.from(current).toString(CONFIG.encoding);
         strings.add(`$${str}$`);
         current = [];
@@ -127,7 +153,6 @@ function extractStrings(buffer: Buffer): string[] {
     if (inDollarBlock) {
       current.push(byte);
     } else if (byte >= 0x20 && byte <= 0x7e) {
-      // Printable ASCII
       current.push(byte);
     } else if (current.length >= CONFIG.minStringLength) {
       const str = Buffer.from(current).toString(CONFIG.encoding);
@@ -140,7 +165,27 @@ function extractStrings(buffer: Buffer): string[] {
   return Array.from(strings);
 }
 
-// Translation function with Google API
+function cleanTranslation(text: string): string {
+  // Remove any text within parentheses
+  text = text.replace(/\(.*?\)/g, "").trim();
+
+  // Remove unwanted phrases
+  const unwantedPhrases = [
+    "Unfortunately",
+    "does not seem to be a word",
+    "is not a word",
+    "is not a phrase",
+    "is not translatable",
+  ];
+  unwantedPhrases.forEach((phrase) => {
+    if (text.includes(phrase)) {
+      text = text.replace(phrase, "").trim();
+    }
+  });
+
+  return text;
+}
+
 async function translateWithGoogleApi(text: string): Promise<string> {
   try {
     const [response] = await googleTranslateClient.translateText({
@@ -160,7 +205,6 @@ async function translateWithGoogleApi(text: string): Promise<string> {
   }
 }
 
-// Translation function with Google Unofficial API
 async function translateWithGoogleUnofficialApi(text: string): Promise<string> {
   try {
     const result = await googleUnofficialTranslate(text, {
@@ -171,12 +215,11 @@ async function translateWithGoogleUnofficialApi(text: string): Promise<string> {
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
-    console.error(`⚠️ Google Unofficial API error: ${errorMessage}`);
+    console.error(`⚠️ Unofficial Google API error: ${errorMessage}`);
     throw error;
   }
 }
 
-// Translation function with OpenAI
 async function translateWithOpenAI(text: string): Promise<string> {
   try {
     const response = await openai.chat.completions.create({
@@ -184,16 +227,15 @@ async function translateWithOpenAI(text: string): Promise<string> {
       messages: [
         {
           role: "user",
-          content: `Translate the following ${CONFIG.translateOptions.from} text to ${CONFIG.translateOptions.to} without adding extra quotes: ${text}`,
+          content: `Translate the following text from ${CONFIG.translateOptions.from} to ${CONFIG.translateOptions.to} without adding extra quotes. Preserve only the original context's quotes: ${text}`,
         },
       ],
       max_tokens: 100,
       temperature: 0.7,
     });
 
-    // Remove extra quotes from the translation
     const translatedText = response.choices[0].message.content?.trim() || text;
-    return translatedText.replace(/^"|"$/g, ""); // Remove leading and trailing quotes
+    return replaceQuotesInText(translatedText);
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
@@ -202,14 +244,118 @@ async function translateWithOpenAI(text: string): Promise<string> {
   }
 }
 
-// Unified translation function
+async function translateWithDeepSeek(text: string): Promise<string> {
+  try {
+    const response = await axios.post(
+      "https://api.deepseek.com/chat/completions",
+      {
+        model: "deepseek-chat",
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a helpful translation assistant. Translate the following text without adding extra quotes. Preserve only the original context's quotes.",
+          },
+          {
+            role: "user",
+            content: `Translate the following text from ${CONFIG.translateOptions.from} to ${CONFIG.translateOptions.to}: ${text}`,
+          },
+        ],
+        stream: false,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    if (
+      !response.data ||
+      !response.data.choices ||
+      !response.data.choices[0]?.message?.content
+    ) {
+      throw new Error("Invalid response from DeepSeek API");
+    }
+
+    const translatedText = response.data.choices[0].message.content;
+    return replaceQuotesInText(translatedText);
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.status === 402) {
+      console.error(
+        "⚠️ DeepSeek API error: Insufficient balance. Please recharge your account."
+      );
+    } else {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      console.error(`⚠️ DeepSeek API error: ${errorMessage}`);
+    }
+
+    if (axios.isAxiosError(error)) {
+      console.error("Response data:", error.response?.data);
+      console.error("Status code:", error.response?.status);
+      console.error("Headers:", error.response?.headers);
+    }
+
+    throw error;
+  }
+}
+
+async function translateWithOpenRouter(text: string): Promise<string> {
+  try {
+    const completion = await openrouter.chat.completions.create({
+      model: CONFIG.openRouterModel,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a translation assistant. Your task is to translate the text exactly as provided, without adding any comments, explanations, or extra information. If the text is not translatable (e.g., acronyms, proper nouns), return it unchanged. Only provide the translated text or the original text if no translation is needed.",
+        },
+        {
+          role: "user",
+          content: `Translate the following text from ${CONFIG.translateOptions.from} to ${CONFIG.translateOptions.to}: ${text}`,
+        },
+      ],
+    });
+
+    /* console.log(
+      "OpenRouter API Response:",
+      JSON.stringify(completion, null, 2)
+    );*/
+
+    if (
+      !completion.choices ||
+      !Array.isArray(completion.choices) ||
+      completion.choices.length === 0 ||
+      !completion.choices[0].message ||
+      !completion.choices[0].message.content
+    ) {
+      throw new Error("Invalid response format from OpenRouter API");
+    }
+
+    let translatedText = completion.choices[0].message.content.trim();
+    translatedText = cleanTranslation(translatedText);
+    return replaceQuotesInText(translatedText);
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    console.error(`⚠️ OpenRouter API error: ${errorMessage}`);
+
+    // Detailed logging for debugging
+    if (error instanceof Error && error.stack) {
+      console.error("Stack trace:", error.stack);
+    }
+
+    throw error;
+  }
+}
+
 async function translateText(filename: string, text: string): Promise<string> {
-  // Ignore text between $$
   if (text.startsWith("$") && text.endsWith("$")) {
     return text;
   }
 
-  // Initialize cache for the file if it doesn't exist
   if (!translationCache[filename]) {
     translationCache[filename] = {};
   }
@@ -219,9 +365,9 @@ async function translateText(filename: string, text: string): Promise<string> {
 
   if (requestCount >= CONFIG.requestLimit) {
     console.log(
-      `⏸️ Request limit of ${CONFIG.requestLimit} reached. Pausing...`
+      `⏸️ Request limit (${CONFIG.requestLimit}) reached. Pausing...`
     );
-    saveCache(); // Save before pausing
+    saveCache();
     await new Promise((resolve) => setTimeout(resolve, CONFIG.cooldownTime));
     requestCount = 0;
   }
@@ -239,15 +385,21 @@ async function translateText(filename: string, text: string): Promise<string> {
       case "openai":
         translated = await translateWithOpenAI(text);
         break;
+      case "deepseek":
+        translated = await translateWithDeepSeek(text);
+        break;
+      case "openrouter":
+        translated = await translateWithOpenRouter(text);
+        break;
       default:
         throw new Error("Invalid translation service selected");
     }
 
+    translated = replaceQuotesInText(translated);
     translationCache[filename][text] = translated;
     requestCount++;
     translatedCount++;
 
-    // Save periodically
     if (translatedCount % 10 === 0) saveCache();
 
     return translated;
@@ -260,7 +412,6 @@ async function translateText(filename: string, text: string): Promise<string> {
   }
 }
 
-// Check if the file is .lxb
 function isLxbFile(filename: string): boolean {
   return filename.endsWith(".lxb");
 }
@@ -270,17 +421,22 @@ async function main() {
     console.log("🚀 Starting translation with cache...");
     loadCache();
 
-    for (const inputFile of CONFIG.inputFiles) {
-      if (!existsSync(inputFile)) {
-        console.error(`⚠️ File not found: ${inputFile}`);
-        continue;
-      }
+    if (!existsSync(CONFIG.inputDir)) {
+      throw new Error(`Input directory not found: ${CONFIG.inputDir}`);
+    }
 
-      // Check if the input file is .lxb
-      if (!isLxbFile(inputFile)) {
-        console.error(`⚠️ Invalid file type: ${inputFile} (expected .lxb)`);
-        continue;
-      }
+    const files = readdirSync(CONFIG.inputDir)
+      .filter((file) => isLxbFile(file))
+      .map((file) => join(CONFIG.inputDir, file));
+
+    if (files.length === 0) {
+      console.log("ℹ️ No .lxb files found in the input directory.");
+      return;
+    }
+
+    for (const inputFile of files) {
+      console.log(`⏳ Starting translation for: ${inputFile}`);
+      const startTime = Date.now();
 
       const buffer = readFileSync(inputFile);
       const strings = extractStrings(buffer);
@@ -291,7 +447,6 @@ async function main() {
         const translated = await translateText(inputFile, str);
         newBuffer = replaceInBuffer(newBuffer, str, translated);
 
-        // Update progress
         if ((index + 1) % 5 === 0) {
           console.log(
             `↻ ${inputFile}: ${index + 1}/${strings.length}`,
@@ -302,13 +457,22 @@ async function main() {
         }
       }
 
-      // Define the output file name with the target language
-      const outputFile = inputFile.replace(
-        /\.lxb$/,
-        `_${CONFIG.translateOptions.to}.lxb`
+      const outputFile = join(
+        CONFIG.outputDir,
+        inputFile
+          .replace(/^.*[\\\/]/, "")
+          .replace(/\.lxb$/, `_${CONFIG.translateOptions.to}.lxb`)
       );
       writeFileSync(outputFile, newBuffer);
       console.log(`💾 Translated file saved: ${outputFile}`);
+
+      const endTime = Date.now();
+      const timeTakenInMinutes = (endTime - startTime) / 60000;
+      console.log(
+        `⏱️ Time taken for ${inputFile}: ${timeTakenInMinutes.toFixed(
+          2
+        )} minutes`
+      );
     }
 
     saveCache();
