@@ -1,24 +1,24 @@
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { translate as googleUnofficialTranslate } from "@vitalets/google-translate-api";
 import { TranslationServiceClient } from "@google-cloud/translate";
-import OpenAI from "openai"; // Importação corrigida
+import OpenAI from "openai";
 import * as dotenv from "dotenv";
 
 dotenv.config();
 
 // Configuration
 const CONFIG = {
-  inputFile: "1stplaya.lxb",
-  outputFile: "1stplaya_pt.lxb",
-  cacheFile: "cache.json",
+  inputFile: "1stplaya.lxb", // Input file
+  cacheFile: "cache.json", // Cache file
   encoding: "utf-8" as const,
   minStringLength: 3,
   requestLimit: 50,
   cooldownTime: 600000, // 10 minutes
   translationService: "openai", // "google", "google-unofficial", or "openai"
+  openAIModel: "gpt-4o-mini", // OpenAI model (e.g., gpt-4, gpt-3.5-turbo)
   translateOptions: {
-    to: "pt",
-    from: "en",
+    to: "pt", // Target language
+    from: "en", // Source language
   },
 };
 
@@ -30,12 +30,12 @@ let errorCount = 0;
 
 // Initialize Google Cloud Translation client
 const googleTranslateClient = new TranslationServiceClient({
-  keyFilename: process.env.GOOGLE_API_KEY_FILE, // Caminho para o arquivo de credenciais
+  keyFilename: process.env.GOOGLE_API_KEY_FILE, // Path to credentials file
 });
 
 // Initialize OpenAI client
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY, // Configuração corrigida
+  apiKey: process.env.OPENAI_API_KEY,
 });
 
 // Cache functions
@@ -65,7 +65,6 @@ function loadCache(): void {
 
 function saveCache(): void {
   try {
-    // We use JSON.stringify with replace to avoid escaping quotes unnecessarily
     const cacheContent = JSON.stringify(translationCache, null, 2).replace(
       /\\"/g,
       '"'
@@ -79,6 +78,7 @@ function saveCache(): void {
     );
   }
 }
+
 // Buffer replacement function
 function replaceInBuffer(
   source: Buffer,
@@ -182,18 +182,20 @@ async function translateWithGoogleUnofficialApi(text: string): Promise<string> {
 async function translateWithOpenAI(text: string): Promise<string> {
   try {
     const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini", // or other suitable model
+      model: CONFIG.openAIModel,
       messages: [
         {
           role: "user",
-          content: `Translate the following ${CONFIG.translateOptions.from} text to ${CONFIG.translateOptions.to}: "${text}"`,
+          content: `Translate the following ${CONFIG.translateOptions.from} text to ${CONFIG.translateOptions.to} without adding extra quotes: ${text}`,
         },
       ],
       max_tokens: 100,
       temperature: 0.7,
     });
 
-    return response.choices[0].message.content || text;
+    // Remove extra quotes from the translation
+    const translatedText = response.choices[0].message.content?.trim() || text;
+    return translatedText.replace(/^"|"$/g, ""); // Remove leading and trailing quotes
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
@@ -204,7 +206,7 @@ async function translateWithOpenAI(text: string): Promise<string> {
 
 // Unified translation function
 async function translateText(text: string): Promise<string> {
-  // Ignora textos entre $$
+  // Ignore text between $$
   if (text.startsWith("$") && text.endsWith("$")) {
     return text;
   }
@@ -255,7 +257,11 @@ async function translateText(text: string): Promise<string> {
   }
 }
 
-// Main function
+// Check if the file is .lxb
+function isLxbFile(filename: string): boolean {
+  return filename.endsWith(".lxb");
+}
+
 async function main() {
   try {
     console.log("🚀 Starting translation with cache...");
@@ -263,6 +269,11 @@ async function main() {
 
     if (!existsSync(CONFIG.inputFile)) {
       throw new Error(`File not found: ${CONFIG.inputFile}`);
+    }
+
+    // Check if the input file is .lxb
+    if (!isLxbFile(CONFIG.inputFile)) {
+      throw new Error(`Invalid file type: ${CONFIG.inputFile} (expected .lxb)`);
     }
 
     const buffer = readFileSync(CONFIG.inputFile);
@@ -285,7 +296,12 @@ async function main() {
       }
     }
 
-    writeFileSync(CONFIG.outputFile, newBuffer);
+    // Define the output file name with the target language
+    const outputFile = CONFIG.inputFile.replace(
+      /\.lxb$/,
+      `_${CONFIG.translateOptions.to}.lxb`
+    );
+    writeFileSync(outputFile, newBuffer);
     saveCache();
 
     console.log("\n✅ Translation completed!");
@@ -293,6 +309,7 @@ async function main() {
     console.log(`- Translated strings: ${translatedCount}`);
     console.log(`- Errors: ${errorCount}`);
     console.log(`- Requests made: ${requestCount}`);
+    console.log(`- Output file: ${outputFile}`);
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
@@ -301,5 +318,4 @@ async function main() {
   }
 }
 
-// Execute
 main();
