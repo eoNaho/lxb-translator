@@ -8,7 +8,7 @@ dotenv.config();
 
 // Configuration
 const CONFIG = {
-  inputFile: "1stplaya.lxb", // Input file
+  inputFiles: ["1stplaya.lxb", "2ndplaya.lxb"], // List of input files
   cacheFile: "cache.json", // Cache file
   encoding: "utf-8" as const,
   minStringLength: 3,
@@ -23,7 +23,7 @@ const CONFIG = {
 };
 
 // Global state
-const translationCache: Record<string, string> = {};
+const translationCache: Record<string, Record<string, string>> = {}; // Cache structure: { filename: { original: translated } }
 let requestCount = 0;
 let translatedCount = 0;
 let errorCount = 0;
@@ -47,9 +47,7 @@ function loadCache(): void {
       if (typeof parsed === "object" && parsed !== null) {
         Object.assign(translationCache, parsed);
         console.log(
-          `📦 Cache loaded: ${
-            Object.keys(translationCache).length
-          } translations`
+          `📦 Cache loaded for ${Object.keys(translationCache).length} files`
         );
         return;
       }
@@ -205,13 +203,18 @@ async function translateWithOpenAI(text: string): Promise<string> {
 }
 
 // Unified translation function
-async function translateText(text: string): Promise<string> {
+async function translateText(filename: string, text: string): Promise<string> {
   // Ignore text between $$
   if (text.startsWith("$") && text.endsWith("$")) {
     return text;
   }
 
-  if (translationCache[text]) return translationCache[text];
+  // Initialize cache for the file if it doesn't exist
+  if (!translationCache[filename]) {
+    translationCache[filename] = {};
+  }
+
+  if (translationCache[filename][text]) return translationCache[filename][text];
   if (text.length < CONFIG.minStringLength) return text;
 
   if (requestCount >= CONFIG.requestLimit) {
@@ -240,7 +243,7 @@ async function translateText(text: string): Promise<string> {
         throw new Error("Invalid translation service selected");
     }
 
-    translationCache[text] = translated;
+    translationCache[filename][text] = translated;
     requestCount++;
     translatedCount++;
 
@@ -267,41 +270,47 @@ async function main() {
     console.log("🚀 Starting translation with cache...");
     loadCache();
 
-    if (!existsSync(CONFIG.inputFile)) {
-      throw new Error(`File not found: ${CONFIG.inputFile}`);
-    }
-
-    // Check if the input file is .lxb
-    if (!isLxbFile(CONFIG.inputFile)) {
-      throw new Error(`Invalid file type: ${CONFIG.inputFile} (expected .lxb)`);
-    }
-
-    const buffer = readFileSync(CONFIG.inputFile);
-    const strings = extractStrings(buffer);
-    console.log(`📊 Strings detected: ${strings.length}`);
-
-    let newBuffer = buffer;
-    for (const [index, str] of strings.entries()) {
-      const translated = await translateText(str);
-      newBuffer = replaceInBuffer(newBuffer, str, translated);
-
-      // Update progress
-      if ((index + 1) % 5 === 0) {
-        console.log(
-          `↻ ${index + 1}/${strings.length}`,
-          `✓:${translatedCount}`,
-          `✗:${errorCount}`,
-          `Req:${requestCount}/${CONFIG.requestLimit}`
-        );
+    for (const inputFile of CONFIG.inputFiles) {
+      if (!existsSync(inputFile)) {
+        console.error(`⚠️ File not found: ${inputFile}`);
+        continue;
       }
+
+      // Check if the input file is .lxb
+      if (!isLxbFile(inputFile)) {
+        console.error(`⚠️ Invalid file type: ${inputFile} (expected .lxb)`);
+        continue;
+      }
+
+      const buffer = readFileSync(inputFile);
+      const strings = extractStrings(buffer);
+      console.log(`📊 Strings detected in ${inputFile}: ${strings.length}`);
+
+      let newBuffer = buffer;
+      for (const [index, str] of strings.entries()) {
+        const translated = await translateText(inputFile, str);
+        newBuffer = replaceInBuffer(newBuffer, str, translated);
+
+        // Update progress
+        if ((index + 1) % 5 === 0) {
+          console.log(
+            `↻ ${inputFile}: ${index + 1}/${strings.length}`,
+            `✓:${translatedCount}`,
+            `✗:${errorCount}`,
+            `Req:${requestCount}/${CONFIG.requestLimit}`
+          );
+        }
+      }
+
+      // Define the output file name with the target language
+      const outputFile = inputFile.replace(
+        /\.lxb$/,
+        `_${CONFIG.translateOptions.to}.lxb`
+      );
+      writeFileSync(outputFile, newBuffer);
+      console.log(`💾 Translated file saved: ${outputFile}`);
     }
 
-    // Define the output file name with the target language
-    const outputFile = CONFIG.inputFile.replace(
-      /\.lxb$/,
-      `_${CONFIG.translateOptions.to}.lxb`
-    );
-    writeFileSync(outputFile, newBuffer);
     saveCache();
 
     console.log("\n✅ Translation completed!");
@@ -309,7 +318,6 @@ async function main() {
     console.log(`- Translated strings: ${translatedCount}`);
     console.log(`- Errors: ${errorCount}`);
     console.log(`- Requests made: ${requestCount}`);
-    console.log(`- Output file: ${outputFile}`);
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
