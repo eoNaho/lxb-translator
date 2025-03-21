@@ -62,3 +62,4 @@ out/
 .cache/
 package-lock.json
 .yarnrc.yml
+src/scripts/

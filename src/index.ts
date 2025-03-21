@@ -13,30 +13,36 @@ import { join } from "path";
 import axios from "axios";
 dotenv.config();
 
-// Configuration
+// Configuration with detailed comments
 const CONFIG = {
-  inputDir: "src/input", // Input directory
-  outputDir: "src/output", // Output directory
-  cacheFile: "src/cache.json", // Cache file
-  encoding: "utf-8" as const,
-  minStringLength: 3,
-  requestLimit: 50,
-  cooldownTime: 600000, // 10 minutes
-  translationService: "openrouter", // "google", "google-unofficial", "openai", "deepseek", or "openrouter"
+  inputDir: "src/input", // Input directory containing source files
+  outputDir: "src/output", // Output directory for translated files
+  cacheFile: "src/cache.json", // Cache file to store translations
+  encoding: "utf-8" as const, // File encoding (UTF-8 recommended)
+  minStringLength: 3, // Minimum string length to consider for translation
+  requestLimit: 50, // Maximum number of API requests before cooldown
+  cooldownTime: 600000, // 10 minutes cooldown after hitting request limit
+  translationService: "openrouter", // Translation service to use: "google", "google-unofficial", "openai", "deepseek", or "openrouter"
   openAIModel: "gpt-4o", // OpenAI model (e.g., gpt-4, gpt-3.5-turbo)
   deepseekModel: "deepseek-translator", // DeepSeek model
-  openRouterModel: "deepseek/deepseek-chat:free", // OpenRouter model
+  openRouterModel: "meta-llama/llama-3-70b-instruct:nitro", // OpenRouter model
+  // Alternative models to try:
+  // "google/palm-2"
+  // "anthropic/claude-3-opus"
+  // "microsoft/wizardlm-2-8x22b"
   translateOptions: {
-    to: "pt", // Target language
-    from: "en", // Source language
+    to: "pt", // Target language code (e.g., "pt" for Portuguese)
+    from: "en", // Source language code (e.g., "en" for English)
   },
 };
 
+// Global variables for tracking translation state
 const translationCache: Record<string, Record<string, string>> = {};
 let requestCount = 0;
 let translatedCount = 0;
 let errorCount = 0;
 
+// Initialize translation clients
 const googleTranslateClient = new TranslationServiceClient({
   keyFilename: process.env.GOOGLE_API_KEY_FILE,
 });
@@ -50,11 +56,13 @@ const openrouter = new OpenAI({
   apiKey: process.env.OPENROUTER_API_KEY,
 });
 
+// Create output directory if it doesn't exist
 if (!existsSync(CONFIG.outputDir)) {
   mkdirSync(CONFIG.outputDir, { recursive: true });
   console.log(`📁 Output directory created: ${CONFIG.outputDir}`);
 }
 
+// Cache management functions
 function loadCache(): void {
   try {
     if (existsSync(CONFIG.cacheFile)) {
@@ -79,10 +87,7 @@ function loadCache(): void {
 
 function saveCache(): void {
   try {
-    const cacheContent = JSON.stringify(translationCache, null, 2).replace(
-      /\\"/g,
-      '"'
-    );
+    const cacheContent = JSON.stringify(translationCache, null, 2);
     writeFileSync(CONFIG.cacheFile, cacheContent);
     console.log("💾 Cache saved successfully!");
   } catch (error) {
@@ -93,8 +98,12 @@ function saveCache(): void {
   }
 }
 
-function replaceQuotesInText(text: string): string {
-  return text.replace(/"/g, "'");
+function escapeQuotes(text: string): string {
+  return text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function unescapeQuotes(text: string): string {
+  return text.replace(/\\"/g, '"').replace(/\\\\/g, "\\");
 }
 
 function replaceInBuffer(
@@ -102,14 +111,8 @@ function replaceInBuffer(
   search: string,
   replace: string
 ): Buffer {
-  const searchBuffer = Buffer.from(
-    replaceQuotesInText(search),
-    CONFIG.encoding
-  );
-  const replaceBuffer = Buffer.from(
-    replaceQuotesInText(replace),
-    CONFIG.encoding
-  );
+  const searchBuffer = Buffer.from(search, CONFIG.encoding);
+  const replaceBuffer = Buffer.from(unescapeQuotes(replace), CONFIG.encoding);
 
   let position = 0;
   const chunks: Buffer[] = [];
@@ -135,7 +138,7 @@ function extractStrings(buffer: Buffer): string[] {
   let current: number[] = [];
   let inDollarBlock = false;
 
-  const bufferText = replaceQuotesInText(buffer.toString(CONFIG.encoding));
+  const bufferText = buffer.toString(CONFIG.encoding);
 
   for (const char of bufferText) {
     const byte = char.charCodeAt(0);
@@ -166,24 +169,12 @@ function extractStrings(buffer: Buffer): string[] {
 }
 
 function cleanTranslation(text: string): string {
-  // Remove any text within parentheses
-  text = text.replace(/\(.*?\)/g, "").trim();
+  if (typeof text !== "string") return text;
 
-  // Remove unwanted phrases
-  const unwantedPhrases = [
-    "Unfortunately",
-    "does not seem to be a word",
-    "is not a word",
-    "is not a phrase",
-    "is not translatable",
-  ];
-  unwantedPhrases.forEach((phrase) => {
-    if (text.includes(phrase)) {
-      text = text.replace(phrase, "").trim();
-    }
-  });
-
-  return text;
+  return text
+    .replace(/\(.*?\)/g, "") // Remove parentheses
+    .replace(/^"+|"+$/g, "") // Remove surrounding quotes
+    .trim();
 }
 
 async function translateWithGoogleApi(text: string): Promise<string> {
@@ -198,9 +189,9 @@ async function translateWithGoogleApi(text: string): Promise<string> {
 
     return response.translations?.[0]?.translatedText || text;
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Unknown error";
-    console.error(`⚠️ Google API error: ${errorMessage}`);
+    console.error(
+      `⚠️ Google API error: ${error instanceof Error ? error.message : error}`
+    );
     throw error;
   }
 }
@@ -211,11 +202,13 @@ async function translateWithGoogleUnofficialApi(text: string): Promise<string> {
       to: CONFIG.translateOptions.to,
       from: CONFIG.translateOptions.from,
     });
-    return result.text;
+    return cleanTranslation(result.text);
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Unknown error";
-    console.error(`⚠️ Unofficial Google API error: ${errorMessage}`);
+    console.error(
+      `⚠️ Unofficial Google API error: ${
+        error instanceof Error ? error.message : error
+      }`
+    );
     throw error;
   }
 }
@@ -227,19 +220,19 @@ async function translateWithOpenAI(text: string): Promise<string> {
       messages: [
         {
           role: "user",
-          content: `Translate the following text from ${CONFIG.translateOptions.from} to ${CONFIG.translateOptions.to} without adding extra quotes. Preserve only the original context's quotes: ${text}`,
+          content: `Translate to ${CONFIG.translateOptions.to} preserving quotes and formatting: "${text}"`,
         },
       ],
       max_tokens: 100,
       temperature: 0.7,
     });
 
-    const translatedText = response.choices[0].message.content?.trim() || text;
-    return replaceQuotesInText(translatedText);
+    const translated = response.choices[0]?.message?.content?.trim() || text;
+    return cleanTranslation(translated);
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Unknown error";
-    console.error(`⚠️ OpenAI API error: ${errorMessage}`);
+    console.error(
+      `⚠️ OpenAI API error: ${error instanceof Error ? error.message : error}`
+    );
     throw error;
   }
 }
@@ -252,13 +245,8 @@ async function translateWithDeepSeek(text: string): Promise<string> {
         model: "deepseek-chat",
         messages: [
           {
-            role: "system",
-            content:
-              "You are a helpful translation assistant. Translate the following text without adding extra quotes. Preserve only the original context's quotes.",
-          },
-          {
             role: "user",
-            content: `Translate the following text from ${CONFIG.translateOptions.from} to ${CONFIG.translateOptions.to}: ${text}`,
+            content: `Translate exactly to ${CONFIG.translateOptions.to}: "${text}"`,
           },
         ],
         stream: false,
@@ -271,33 +259,13 @@ async function translateWithDeepSeek(text: string): Promise<string> {
       }
     );
 
-    if (
-      !response.data ||
-      !response.data.choices ||
-      !response.data.choices[0]?.message?.content
-    ) {
-      throw new Error("Invalid response from DeepSeek API");
-    }
-
-    const translatedText = response.data.choices[0].message.content;
-    return replaceQuotesInText(translatedText);
+    const translated =
+      response.data?.choices?.[0]?.message?.content?.trim() || text;
+    return cleanTranslation(translated);
   } catch (error) {
-    if (axios.isAxiosError(error) && error.response?.status === 402) {
-      console.error(
-        "⚠️ DeepSeek API error: Insufficient balance. Please recharge your account."
-      );
-    } else {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      console.error(`⚠️ DeepSeek API error: ${errorMessage}`);
-    }
-
-    if (axios.isAxiosError(error)) {
-      console.error("Response data:", error.response?.data);
-      console.error("Status code:", error.response?.status);
-      console.error("Headers:", error.response?.headers);
-    }
-
+    console.error(
+      `⚠️ DeepSeek API error: ${error instanceof Error ? error.message : error}`
+    );
     throw error;
   }
 }
@@ -310,41 +278,33 @@ async function translateWithOpenRouter(text: string): Promise<string> {
         {
           role: "system",
           content:
-            "You are a translation assistant. Your task is to translate the text exactly as provided, without adding any comments, explanations, or extra information. If the text is not translatable (e.g., acronyms, proper nouns), return it unchanged. Only provide the translated text or the original text if no translation is needed.",
+            "Translate with absolute accuracy, preserving all quotes, formatting, and context. Maintain game-specific terminology without alterations.",
         },
         {
           role: "user",
-          content: `Translate the following text from ${CONFIG.translateOptions.from} to ${CONFIG.translateOptions.to}: ${text}`,
+          content: `Translate to ${CONFIG.translateOptions.to} without explanations: "${text}"`,
         },
       ],
+      temperature: 0.3,
+      top_p: 0.95,
     });
 
-    /* console.log(
-      "OpenRouter API Response:",
-      JSON.stringify(completion, null, 2)
-    );*/
-
-    if (
-      !completion.choices ||
-      !Array.isArray(completion.choices) ||
-      completion.choices.length === 0 ||
-      !completion.choices[0].message ||
-      !completion.choices[0].message.content
-    ) {
-      throw new Error("Invalid response format from OpenRouter API");
+    if (!completion?.choices?.[0]?.message?.content) {
+      throw new Error("Invalid OpenRouter response structure");
     }
 
-    let translatedText = completion.choices[0].message.content.trim();
-    translatedText = cleanTranslation(translatedText);
-    return replaceQuotesInText(translatedText);
+    const content = completion.choices[0].message.content;
+    return cleanTranslation(content.replace(/^"+|"+$/g, "").trim());
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Unknown error";
-    console.error(`⚠️ OpenRouter API error: ${errorMessage}`);
+    console.error(
+      `⚠️ OpenRouter API error: ${
+        error instanceof Error ? error.message : error
+      }`
+    );
 
-    // Detailed logging for debugging
-    if (error instanceof Error && error.stack) {
-      console.error("Stack trace:", error.stack);
+    if (error instanceof Error && error.message.includes("rate limit")) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      return translateWithOpenRouter(text);
     }
 
     throw error;
@@ -352,14 +312,9 @@ async function translateWithOpenRouter(text: string): Promise<string> {
 }
 
 async function translateText(filename: string, text: string): Promise<string> {
-  if (text.startsWith("$") && text.endsWith("$")) {
-    return text;
-  }
+  if (text.startsWith("$") && text.endsWith("$")) return text;
 
-  if (!translationCache[filename]) {
-    translationCache[filename] = {};
-  }
-
+  if (!translationCache[filename]) translationCache[filename] = {};
   if (translationCache[filename][text]) return translationCache[filename][text];
   if (text.length < CONFIG.minStringLength) return text;
 
@@ -373,29 +328,39 @@ async function translateText(filename: string, text: string): Promise<string> {
   }
 
   try {
-    let translated: string;
+    let translated = text; // Inicializa a variável com um valor padrão
+    let retries = 3;
 
-    switch (CONFIG.translationService) {
-      case "google":
-        translated = await translateWithGoogleApi(text);
+    while (retries > 0) {
+      try {
+        switch (CONFIG.translationService) {
+          case "google":
+            translated = await translateWithGoogleApi(text);
+            break;
+          case "google-unofficial":
+            translated = await translateWithGoogleUnofficialApi(text);
+            break;
+          case "openai":
+            translated = await translateWithOpenAI(text);
+            break;
+          case "deepseek":
+            translated = await translateWithDeepSeek(text);
+            break;
+          case "openrouter":
+            translated = await translateWithOpenRouter(text);
+            break;
+          default:
+            throw new Error("Invalid translation service");
+        }
         break;
-      case "google-unofficial":
-        translated = await translateWithGoogleUnofficialApi(text);
-        break;
-      case "openai":
-        translated = await translateWithOpenAI(text);
-        break;
-      case "deepseek":
-        translated = await translateWithDeepSeek(text);
-        break;
-      case "openrouter":
-        translated = await translateWithOpenRouter(text);
-        break;
-      default:
-        throw new Error("Invalid translation service selected");
+      } catch (error) {
+        retries--;
+        if (retries === 0) throw error;
+        console.log(`Retrying... (${retries} attempts left)`);
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
     }
 
-    translated = replaceQuotesInText(translated);
     translationCache[filename][text] = translated;
     requestCount++;
     translatedCount++;
@@ -404,10 +369,12 @@ async function translateText(filename: string, text: string): Promise<string> {
 
     return translated;
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Unknown error";
-    console.error(`⚠️ Translation error: ${errorMessage}`);
     errorCount++;
+    console.error(
+      `⚠️ Translation error for "${text}": ${
+        error instanceof Error ? error.message : error
+      }`
+    );
     return text;
   }
 }
@@ -418,7 +385,7 @@ function isLxbFile(filename: string): boolean {
 
 async function main() {
   try {
-    console.log("🚀 Starting translation with cache...");
+    console.log("🚀 Starting translation...");
     loadCache();
 
     if (!existsSync(CONFIG.inputDir)) {
@@ -426,21 +393,21 @@ async function main() {
     }
 
     const files = readdirSync(CONFIG.inputDir)
-      .filter((file) => isLxbFile(file))
+      .filter(isLxbFile)
       .map((file) => join(CONFIG.inputDir, file));
 
     if (files.length === 0) {
-      console.log("ℹ️ No .lxb files found in the input directory.");
+      console.log("ℹ️ No .lxb files found");
       return;
     }
 
     for (const inputFile of files) {
-      console.log(`⏳ Starting translation for: ${inputFile}`);
+      console.log(`⏳ Processing: ${inputFile}`);
       const startTime = Date.now();
 
       const buffer = readFileSync(inputFile);
       const strings = extractStrings(buffer);
-      console.log(`📊 Strings detected in ${inputFile}: ${strings.length}`);
+      console.log(`📊 Found ${strings.length} strings`);
 
       let newBuffer = buffer;
       for (const [index, str] of strings.entries()) {
@@ -449,10 +416,10 @@ async function main() {
 
         if ((index + 1) % 5 === 0) {
           console.log(
-            `↻ ${inputFile}: ${index + 1}/${strings.length}`,
-            `✓:${translatedCount}`,
-            `✗:${errorCount}`,
-            `Req:${requestCount}/${CONFIG.requestLimit}`
+            `↻ Progress: ${index + 1}/${strings.length}`,
+            `Translated: ${translatedCount}`,
+            `Errors: ${errorCount}`,
+            `Requests: ${requestCount}/${CONFIG.requestLimit}`
           );
         }
       }
@@ -460,32 +427,27 @@ async function main() {
       const outputFile = join(
         CONFIG.outputDir,
         inputFile
-          .replace(/^.*[\\\/]/, "")
+          .replace(/^.*[\\/]/, "")
           .replace(/\.lxb$/, `_${CONFIG.translateOptions.to}.lxb`)
       );
       writeFileSync(outputFile, newBuffer);
-      console.log(`💾 Translated file saved: ${outputFile}`);
-
-      const endTime = Date.now();
-      const timeTakenInMinutes = (endTime - startTime) / 60000;
+      console.log(`💾 Saved: ${outputFile}`);
       console.log(
-        `⏱️ Time taken for ${inputFile}: ${timeTakenInMinutes.toFixed(
-          2
-        )} minutes`
+        `⏱️ Time: ${((Date.now() - startTime) / 60000).toFixed(2)} minutes`
       );
     }
 
     saveCache();
-
     console.log("\n✅ Translation completed!");
-    console.log(`📝 Statistics:`);
-    console.log(`- Translated strings: ${translatedCount}`);
-    console.log(`- Errors: ${errorCount}`);
-    console.log(`- Requests made: ${requestCount}`);
+    console.log(`📊 Statistics:
+    Translated: ${translatedCount}
+    Errors: ${errorCount}
+    Requests: ${requestCount}`);
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Unknown error";
-    console.error("\n🔥 Critical error:", errorMessage);
+    console.error(
+      "\n🔥 Critical error:",
+      error instanceof Error ? error.message : error
+    );
     process.exit(1);
   }
 }
